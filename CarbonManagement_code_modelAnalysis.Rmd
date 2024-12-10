@@ -1,0 +1,444 @@
+---
+title: "Carbon_Management_model analysis"
+author: "Sofie Van Winckel"
+date: "2024-12-05"
+output: html_document
+---
+#0.Data preparation
+##0.1 Load Field data
+```{r load field data}
+setwd("C:/Users/u0152263/OneDrive - KU Leuven/0500 Papers/0510 CarbonManagementRS/0511 data and code availability")
+library(openxlsx)
+data_tree <- read.xlsx("field_data.xlsx", sheet=1)
+data_plot <- read.xlsx("field_data.xlsx", sheet=2)
+data_patch <- read.xlsx("field_data.xlsx", sheet=3)
+
+#Shp files from the INFORMA management platform: 
+setwd("C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium")
+#shp file of plots and patches
+library(sf)
+#load forest patches
+patches_field <- st_read("selected_bel.shp")
+
+#Shp file from plot coordinates:
+#load forest plots
+plots <- st_read("plots_bel_fin.shp")
+
+```
+
+##0.2 Load Sentinel-2 data: 2023 - only for sampled forest patches
+```{r load Sentinel-2}
+#From Google Earth Engine, after cloud masking, extracted for the relevant forest patches, taken the temporal mean for July up to September 2023
+setwd("C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor")
+#load geoTIFF data of all bands, they are already masked for clouds
+library(raster)
+rlist=list.files(getwd(), pattern="tif$", full.names=FALSE)
+for(i in rlist) {assign(unlist(strsplit(i, "[.]"))[1], raster(i))}
+```
+
+##0.3. Preprocessing Sentinel-2
+
+```{r preprocessing Sentinel-2}
+#resampling
+#resample bands B5, B6, B7, B11, B12 from 20m resolution to 10 m resolution
+#using nearest neighbor method
+Sentinel_noCl_B5_10m <- resample(Sentinel_noCl_B5, Sentinel_noCl_B2, method='ngb','Sentinel_noCl_B5_10m', overwrite=TRUE)
+Sentinel_noCl_B6_10m <- resample(Sentinel_noCl_B6, Sentinel_noCl_B2, method='ngb','Sentinel_noCl_B6_10m', overwrite=TRUE)
+Sentinel_noCl_B7_10m <- resample(Sentinel_noCl_B7, Sentinel_noCl_B2, method='ngb','Sentinel_noCl_B7_10m', overwrite=TRUE)
+Sentinel_noCl_B11_10m <- resample(Sentinel_noCl_B11, Sentinel_noCl_B2, method='ngb','Sentinel_noCl_B11_10m', overwrite=TRUE)
+Sentinel_noCl_B12_10m <- resample(Sentinel_noCl_B12, Sentinel_noCl_B2, method='ngb','Sentinel_noCl_B12_10m', overwrite=TRUE)
+
+SenBel <- brick(Sentinel_noCl_B2, Sentinel_noCl_B3, Sentinel_noCl_B4, Sentinel_noCl_B5_10m, Sentinel_noCl_B6_10m, Sentinel_noCl_B7_10m, Sentinel_noCl_B8, Sentinel_noCl_B11_10m, Sentinel_noCl_B12_10m, nl=9)
+names(SenBel) <- c("B2","B3","B4","B5","B6", "B7", "B8","B11","B12")
+
+writeRaster(Sentinel_noCl_B5_10m, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/Sentinel_noCl_B5_10m.tif", format="GTiff")
+writeRaster(Sentinel_noCl_B6_10m, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/Sentinel_noCl_B6_10m.tif", format="GTiff")
+writeRaster(Sentinel_noCl_B7_10m, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/Sentinel_noCl_B7_10m.tif", format="GTiff")
+writeRaster(Sentinel_noCl_B11_10m, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/Sentinel_noCl_B11_10m.tif", format="GTiff")
+writeRaster(Sentinel_noCl_B12_10m, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/Sentinel_noCl_B12_10m.tif", format="GTiff")
+
+
+#vegetation indices
+NDVI <- (SenBel[['B8']]-SenBel[['B4']])/(SenBel[['B8']]+SenBel[['B4']]);
+EVI <- 2.5*((SenBel[['B8']]-SenBel[['B4']])/(1+SenBel[['B8']]+6*SenBel[['B4']]-7.5*SenBel[['B2']]));
+LAI <- 3.618*EVI-0.118;
+GNDVI <- (SenBel[['B3']]-SenBel[['B4']])/(SenBel[['B3']]+SenBel[['B4']]);
+NDI45 <- (SenBel[['B5']]-SenBel[['B4']])/(SenBel[['B5']]+SenBel[['B4']]);
+STVI1 <- SenBel[['B11']]*SenBel[['B4']]/SenBel[['B8']];
+SAVI <- (SenBel[['B8']]-SenBel[['B4']])/(SenBel[['B8']]+SenBel[['B4']]+0.5)*1.5;
+REDNDVI <- (SenBel[['B8']]-SenBel[['B7']])/(SenBel[['B8']]+SenBel[['B7']])
+#red edge: B5, B6 or B7
+MCARI <- (SenBel[['B5']]-SenBel[['B4']])-0.2*(SenBel[['B5']]-SenBel[['B3']])*(SenBel[['B5']]-SenBel[['B4']])
+PSSRa <- SenBel[['B7']]/SenBel[['B4']]
+RVI <- SenBel[['B8']]/SenBel[['B4']]
+IPVI <- 0.5*(NDVI+1)
+ARVI <- (SenBel[['B8']]-(2*SenBel[['B4']]-SenBel[['B2']]))/(SenBel[['B8']]+(2*SenBel[['B4']]-SenBel[['B2']]))
+IRECI <- (SenBel[['B7']]-SenBel[['B4']])/(SenBel[['B5']]/SenBel[['B6']])
+MTCI <- (SenBel[['B6']]-SenBel[['B5']])/(SenBel[['B5']]-SenBel[['B4']])
+STVI2 <- SenBel[['B8']]/(SenBel[['B4']]*SenBel[['B12']])
+STVI3 <- SenBel[['B8']]/(SenBel[['B4']]*SenBel[['B11']])
+VegBel <- brick(NDVI, LAI, EVI, GNDVI, NDI45, STVI1, SAVI, REDNDVI,
+                MCARI, PSSRa, RVI, IPVI, ARVI, IRECI, MTCI, STVI2, STVI3, nl=11)
+names(VegBel) <- c('NDVI', 'LAI', 'EVI', 'GNDVI', 'NDI45', 'STVI1', 'SAVI',
+                   'REDNDVI', 'MCARI', 'PSSRa', 'RVI', 'IPVI', 'ARVI', 'IRECI', 'MTCI', 
+                   'STVI2', 'STVI3')
+
+writeRaster(REDNDVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/REDNDVI.tif", format="GTiff")
+writeRaster(GNDVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/GNDVI.tif", format="GTiff")
+writeRaster(NDVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/NDVI.tif", format="GTiff")
+writeRaster(EVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/EVI.tif", format="GTiff")
+writeRaster(LAI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/LAI.tif", format="GTiff")
+writeRaster(NDI45, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/NDI45.tif", format="GTiff")
+writeRaster(SAVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/SAVI.tif", format="GTiff")
+writeRaster(STVI1, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/STVI1.tif", format="GTiff")
+writeRaster(STVI2, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/STVI2.tif", format="GTiff")
+writeRaster(STVI3, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/STVI3.tif", format="GTiff")
+writeRaster(MCARI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/MCARI.tif", format="GTiff", overwrite=T)
+writeRaster(IPVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/IPVI.tif", format="GTiff")
+writeRaster(MTCI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/MTCI.tif", format="GTiff")
+writeRaster(ARVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/ARVI.tif", format="GTiff")
+writeRaster(RVI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/RVI.tif", format="GTiff")
+writeRaster(IRECI, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/IRECI.tif", format="GTiff")
+writeRaster(PSSRa, filename="C:/Users/sofie/OneDrive - KU Leuven/MASTERTHESIS/data/raw data/Belgium/SenBeljul-sept23_cor/PSSRa.tif", format="GTiff")
+
+```
+
+##0.4 Calculate mean values per plot
+```{r mean plot values}
+#delete M values from geometry
+patches_field <- st_zm(patches_field, what="ZM")
+plots <- st_zm(plots, what="ZM")
+
+#create buffer of 18 m radius: EPSG 31370
+plotLambert <- st_transform(plots, 31370)
+bufferLambert <- st_buffer(plotLambert, 18, nQuadSegs=8)
+buffer84 <- st_transform(bufferLambert, 4326)
+library(ggplot2)
+
+
+# calculate mean veg index per patch and add as a column to 'buffer84'
+for (i in 1:nlayers(VegBel)) {
+  # Get the name of the current raster layer
+  layer_name <- names(VegBel)[i]
+  # Extract values for each plot for the current band
+  values <- extract(VegBel[[i]], buffer84, fun = mean, na.rm = TRUE, weights=T)
+  # Add the values as a new column with the raster layer name to the shapefile
+  buffer84[[layer_name]] <- values
+}
+
+# Calculate mean values for bands
+for (i in 1:nlayers(SenBel)) {
+  # Get the name of the current raster layer
+  layer_name <- names(SenBel)[i]
+  # Extract values for each plot for the current band
+  values <- extract(SenBel[[i]], buffer84, fun = mean, na.rm = TRUE, weights=T)
+  # Add the values as a new column with the raster layer name to the shapefile
+  buffer84[[layer_name]] <- values
+}
+
+plots_f_S2 <- buffer84
+plots_f_S2 <- plots_f_S2%>% st_drop_geometry
+names(plots_f_S2)[names(plots_f_S2) == "id"] <- "plot_ID"
+plots_f_S2 <- merge(plots_f_S2, data_plot[, c("plot_ID", "AGB_plot_conv")], by = "plot_ID", all.x = TRUE)
+names(plots_f_S2)[names(plots_f_S2) == "AGB_plot_conv"] <- "AGB"
+```
+
+#1. Feature Selection
+```{r Feature selection}
+#1.1 correlation analysis: detect multicollinearity and explore dataset
+library(corrplot)
+datacor <- plots_f_S2[,-1:-13]
+coragb <- data.frame(colnames(datacor[,1:26]),array(rep(0,26)))
+
+for (i in 1:26) {
+  coragb[i,2] <- cor(datacor$AGB, datacor[,i], method='pearson')
+}
+coragb
+library(corrplot)
+corrplot(cor(datacor))
+
+#1.2 outlier analysis
+boxplot(plots_f_S2$AGB)
+#No big outliers regarding AGB
+#one outlier in B12 values --> delete this plot
+plots_f_S2 <- plots_f_S2[plots_f_S2$B12<1700,]
+
+#1.3 RFE
+library(randomForest)
+library(caret)
+
+# Define the control using a random forest selection function
+control <- rfeControl(functions = rfFuncs, # random forest
+                      method = "repeatedcv", # repeated cv
+                      repeats = 5, # number of repeats
+                      number = 10) # number of folds
+x <- plots_f_S2[,14:39]
+y <- plots_f_S2$AGB
+
+set.seed(2021)
+
+inTrain <- createDataPartition(y, p = .90, list = FALSE)[,1] 
+x_train <- x[ inTrain, ]
+x_test  <- x[-inTrain, ]
+y_train <- y[ inTrain]
+y_test  <- y[-inTrain]
+# Run RFE
+result_rfe1 <- rfe(x = x_train,y = y_train, sizes = c(1:26, 5),
+                   rfeControl = control)
+# Print the results
+result_rfe1
+
+# Print the selected features
+predictors(result_rfe1)
+
+
+importance_values <- result_rfe1$variables
+
+# Plot the importance of features
+ggplot(importance_values, aes(x=reorder(var, -Overall), y=Overall)) +
+  geom_bar(stat="identity", fill="steelblue") +
+  theme_minimal() +
+  labs(x="Feature", y="Importance", title="Feature Importance from RFE")
+
+
+```
+#2. GAM model and tuning
+```{r GAM model}
+library(mgcv)
+library(Metrics)
+plots_f_S2$Carbon <- 05*plots_f_S2$AGB
+
+#2.1 check normality
+hist(plots_f_S2$Carbon)  #normally distributed
+
+#2.2 Add species data to plots
+#levels:Qa/Fs, Fs, Qr, Qr/Fs, Fs/Qr, Ps, PnC
+#= too much --> change to 'pinus', 'quercus', 'mixed'
+plots_f_S2$Species <- gsub("PnC|Ps", "pinus", plots_f_S2$Species)
+plots_f_S2$Species <- gsub("Qr|Qa", "quercus", plots_f_S2$Species)
+plots_f_S2$Species <- gsub("Fs", "fagus", plots_f_S2$Species)
+plots_f_S2$Species <- gsub("quercus/fagus", "mixed", plots_f_S2$Species)
+plots_f_S2$Species <- gsub("fagus/quercus", "mixed", plots_f_S2$Species)
+
+#as a factor
+plots_f_S2$Species <- as.factor(plots_f_S2$Species)
+
+#2.3 cross validation to make a robust model
+data_gams <- plots_f_S2
+set.seed(1)
+train_ind <- sample(1:nrow(data_gams), 0.9 * nrow(data_gams)) #90% training data
+data_gams_train <- data_gams[train_ind, ]
+data_gams_test<- data_gams[-train_ind, ]
+r_sq_means <- numeric(length=nrow(data_gams_train))
+# Perform Leave-One-Out Cross-Validation (LOOCV)
+for (i in 1:nrow(data_gams_train)) {
+  train <- data_gams_train[-i, ]  # only 1 test observation: i
+  test <- data_gams_train[i, ]
+  formula <- Carbon~s(MCARI)+B5+s(STVI3)+s(B12)+GNDVI+s(Species, bs='re')
+  # Fit model on training data
+  gam_model <- gam(formula, data = train,family = Gamma(link="log"), method='NCV', gamma=1.4)
+  # Predict on the left-out observation
+  # prediction <- predict.gam(gam_model, newdata = test)
+  # Calculate deviance explained for this fold
+  sum <- summary(gam_model)
+  r_sq_means[i] <-  sum$dev.expl
+}
+r_sq_means
+mean(r_sq_means)
+
+```
+
+#3. Model Optimization
+##3.1 Oversaturation
+```{r oversaturation effects}
+#disregard trees with AGB>450 = Carbon>225 tons/ha
+plots_f_S2_450 <- plots_f_S2[plots_f_S2$AGB < 450,]
+
+data_gams <- plots_f_S2_450
+set.seed(2021)
+train_ind <- sample(1:nrow(data_gams), 0.9 * nrow(data_gams)) #90% training data
+data_gams_train <- data_gams[train_ind, ]
+data_gams_test<- data_gams[-train_ind, ]
+r_sq_means <- numeric(length=nrow(data_gams_train))
+# Perform Leave-One-Out Cross-Validation (LOOCV)
+for (i in 1:nrow(data_gams_train)) {
+  train <- data_gams_train[-i, ]  # only 1 test observation: i
+  test <- data_gams_train[i, ]
+  formula <- Carbon~s(MCARI)+B5+s(STVI3)+s(B12)+GNDVI+s(Species, bs='re')
+  # Fit model on training data
+  gam_model <- gam(formula, data = train,family = Gamma(link="log"), method='NCV', gamma=1.4)
+  # Predict on the left-out observation
+  # prediction <- predict.gam(gam_model, newdata = test)
+  # Calculate deviance explained for this fold
+  sum <- summary(gam_model)
+  r_sq_means[i] <-  sum$dev.expl
+}
+r_sq_means
+mean(r_sq_means)
+
+```
+##3.2 Detection of small trees
+```{r detection of small trees}
+# only AGB from level B and C
+plots_f_S2<- plots_f_S2[order(plots_f_S2$plot_ID),]
+data_plot <- data_plot[order(data_plot$plot_ID),]
+
+plots_f_S2 <- merge(plots_f_S2, data_plot[, c("plot_ID", "AGB_per_ha_conv_B", "AGB_per_ha_conv_C")], by = "plot_ID", all.x = TRUE)
+plots_f_S2$AGB_BC <- plots_f_S2$AGB_per_ha_conv_B + plots_f_S2$AGB_per_ha_conv_C
+
+plots_f_S2$Carbon_BC <- 0.5*plots_f_S2$AGB_BC 
+data_gams <- plots_f_S2
+set.seed(2021)
+train_ind <- sample(1:nrow(data_gams), 0.9 * nrow(data_gams)) #90% training data
+data_gams_train <- data_gams[train_ind, ]
+data_gams_test<- data_gams[-train_ind, ]
+r_sq_means <- numeric(length=nrow(data_gams_train))
+# Perform Leave-One-Out Cross-Validation (LOOCV)
+for (i in 1:nrow(data_gams_train)) {
+  train <- data_gams_train[-i, ]  # only 1 test observation: i
+  test <- data_gams_train[i, ]
+  formula <- Carbon_BC~s(MCARI)+B5+s(STVI3)+s(B12)+GNDVI+s(Species, bs='re')
+  # Fit model on training data
+  gam_model <- gam(formula, data = train,family = Gamma(link="log"), method='NCV', gamma=1.4)
+  # Predict on the left-out observation
+  # prediction <- predict.gam(gam_model, newdata = test)
+  # Calculate deviance explained for this fold
+  sum <- summary(gam_model)
+  r_sq_means[i] <-  sum$dev.expl
+}
+r_sq_means
+mean(r_sq_means)
+
+#For a detailed analysis on the detection limit of DBH, see R markdown '3.2_gam_DBH_detection'
+```
+#4. Multi-sensor modeling
+##4.1 Load data Sentinel-1 and GEDI
+```{r load Sentinel-1 and GEDI}
+#From Google Earth Engine, at level-1 GRD IW 10m resolution with dual polarization for both ascending and descending passes. A Lee speckle filter was applied in Google Earth Engine
+
+#4.1.1 Sentinel-1
+setwd("C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium/Sentinel-1/2023")
+#in dB
+Sen1_VV <- raster("Sen1_Lee_VV.tif")
+Sen1_VH <- raster("Sen1_Lee_VH.tif")
+
+#4.1.2 ETH-height from GEDI
+#downloaded from Lang et al. (2022)
+setwd("C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium")
+Bel_H <- raster("ETH_Height_Bel.tif")
+
+```
+##4.2 Preprocessing
+```{r Preprocessing}
+#4.2.1 Sentinel-1
+#resampling, using B3 as a reference
+Sen1_VV_res <- resample(Sen1_VV, B3, method='ngb','Sen1_VV_res', overwrite=TRUE)
+Sen1_VH_res <- resample(Sen1_VH, B3, method='ngb','Sen1_VH_res', overwrite=TRUE)
+writeRaster(Sen1_VV_res, filename="C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium/Sentinel-1/Sen1_Lee_VV_res.tif", format="GTiff",overwrite=T)
+writeRaster(Sen1_VH_res, filename="C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium/Sentinel-1/Sen1_Lee_VH_res.tif", format="GTiff", overwrite=T)
+
+Sen1_VV <- Sen1_VV_res
+Sen1_VH <- Sen1_VH_res
+# calculate mean veg index per patch and add as a column to 'buffer84'
+  # Extract values for each plot for the current band
+valuesVH <- extract(Sen1_VH, buffer84, fun = mean, na.rm = TRUE, weights=T)
+valuesVV <- extract(Sen1_VV, buffer84, fun = mean, na.rm = TRUE, weights=T)
+  # Add the values as a new column with the raster layer name to the shapefile
+layer_nameVV <- "Sen1_VV"
+layer_nameVH <- "Sen1_VH"
+buffer84[[layer_nameVV]] <- valuesVV
+buffer84[[layer_nameVH]] <- valuesVH
+
+#add VV and VH to plots_f_S2
+names(buffer84)[names(buffer84) == "id"] <- "plot_ID"
+plots_f_S2_S1 <- merge(plots_f_S2, buffer84[, c("plot_ID", "Sen1_VV", "Sen1_VH")], by = "plot_ID", all.x = TRUE)
+
+#4.2.2. ETH_height from GEDI
+#Load data table of buffer84
+#Calculate height for each plot
+values_Height <- extract(Bel_H, buffer84, fun = mean, na.rm = TRUE,weights=T)
+
+#Add height to attribute table of buffer84
+layer_nameHeight <- "ETH_height"
+buffer84[[layer_nameHeight]] <- values_Height
+plots_f_S2_S1_H<- merge(plots_f_S2_S1, buffer84[, c("plot_ID","ETH_height")], by = "plot_ID", all.x = TRUE)
+plots_f_S2_S1_H <- plots_f_S2_S1_H[,-c(48,50)]
+write.xlsx(plots_f_S2_S1_H, file="C:/Users/u0152263/OneDrive - KU Leuven/0500 Papers/0510 CarbonManagementRS/0511 data and code availability/plots_f_S2_S1_H.xlsx", colNames=T)
+
+```
+
+##4.3 Model analysis
+```{r Model analysis}
+#check correlation with Carbon
+cor(plots_f_S2_S1_H$Sen1_VV, plots_f_S2_S1_H$Carbon)
+cor(plots_f_S2_S1_H$Sen1_VH, plots_f_S2_S1_H$Carbon)
+cor(plots_f_S2_S1_H$ETH_height, plots_f_S2_S1_H$Carbon)
+
+#use following code to test adding ETH_height, VV and VH in the model
+data_gams <- plots_f_S2_S1_H
+set.seed(2021)
+train_ind <- sample(1:nrow(data_gams), 0.9 * nrow(data_gams)) #90% training data
+data_gams_train <- data_gams[train_ind, ]
+data_gams_test<- data_gams[-train_ind, ]
+r_sq_means <- numeric(length=nrow(data_gams_train))
+# Perform Leave-One-Out Cross-Validation (LOOCV)
+for (i in 1:nrow(data_gams_train)) {
+  train <- data_gams_train[-i, ]  # only 1 test observation: i
+  test <- data_gams_train[i, ]
+  formula <- Carbon~s(MCARI)+B5+STVI3+s(B12)+GNDVI+ETH_height+s(Species,bs='re')+s(Sen1_VH)+Sen1_VV
+  # Fit model on training data
+ gam_model <- gam(formula, data = train,family = Gamma(link="log"),method='NCV', gamma=1.4)
+  # Predict on the left-out observation
+  # prediction <- predict.gam(gam_model, newdata = test)
+  # Calculate deviance explained for this fold
+  sum <- summary(gam_model)
+  r_sq_means[i] <-  sum$dev.expl
+}
+r_sq_means
+mean(r_sq_means)
+```
+
+#5. Final model
+```{r Final model}
+
+#final model: test to unseen data
+#train on full 90% training data
+gam_fin <- gam(formula=Carbon~s(MCARI)+B5+STVI3+s(B12)+GNDVI+ETH_height+s(Species,bs='re')+s(Sen1_VH)+Sen1_VV, data=data_gams_train,  family = Gamma(link="log"), method="NCV", gamma=1.4)
+# test on the non-seen testing data
+pred_fin <- predict(gam_fin, newdata = data_gams_test, type='response')
+#validation metrics
+library(Metrics)
+rmse_fin <- rmse(pred_fin, data_gams_test$Carbon)
+rmse_fin
+mae_fin<-  mae(pred_fin, data_gams_test$Carbon)
+mae_fin
+plot(data_gams_test$Carbon, pred_fin)
+sum <- summary(gam_fin)
+sum
+dev_expl_fin <- sum$dev.expl
+dev_expl_fin
+```
+
+#6. Extrapolation
+Load Sentinel-1, Sentinel-2, ETH (GEDI) data now for all forest patches in the study area (also the ones that were not sampled before)
+* repeat step 0.3, 0.4, and 5. (predict C for each pixel)
+```{r patch aggregation}
+#Aggreagate at patch level, only using pixels with 90% overlap
+#example if B5_10m is Sentinel-2 B5 data, patch is the shp file with all forest patches:
+values_B5 <- terra::extract(B5_10m, patch, weight=T, xy=T)
+values_B5 <- values_B5[values_B5$weight>0.9,]
+
+#example of aggregation if data_S2_S2_H contains the values of all vegetation indices and remote sensing (Sentinel-2, Sentinel-1, GEDI) for each pixel, and the carbon calculated for that pixel
+## take mean per patch
+#+ calculate standard error
+library(dplyr)
+C_patch <- data_S2_S1_H %>%
+  group_by(Patch.ID) %>%
+  summarise(
+    mean_carbon = mean(Carbon, na.rm=T),
+    sd = sd(Carbon, na.rm=T),
+    n = n(),
+    se = sd / sqrt(n)
+  )
+
+```
