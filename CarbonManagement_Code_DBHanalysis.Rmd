@@ -1,0 +1,200 @@
+---
+title: "3.2_gam_DBH_detection"
+author: "Sofie Van Winckel"
+date: "2024-12-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Packages
+
+```{r packages}
+requiredPackages <- c("openxlsx","mgcv","ggplot2", "Metrics", "tidyr")
+
+# Check if required packages are installed; if a package is not installed, install it; then load the packages
+for (package in requiredPackages) {
+  if (!require(package, character.only=TRUE)) {
+    install.packages(package, dependencies=TRUE)
+  }
+  library(package, character.only=TRUE)
+}
+```
+
+## Load data
+
+```{r load data}
+#Load data table of buffer84
+setwd("C:/Users/u0152263/OneDrive - KU Leuven/0500 Papers/0510 CarbonManagementRS/0511 data and code availability")
+data <- read.xlsx("plots_f_S2_S1_H.xlsx")
+
+#add species to the plot data
+library(sf)
+setwd("C:/Users/u0152263/OneDrive - KU Leuven (1)/MASTERTHESIS/data/raw data/Belgium")
+patch_shp <- st_read("selected_bel.shp")
+matching_indices<- match(data$Patch.ID, patch_shp$Patch.ID)
+data$Species <- patch_shp$Species[matching_indices]
+
+#levels:Qa/Fs, Fs, Qr, Qr/Fs, Fs/Qr, Ps, PnC
+#= too much --> change to 'pinus', 'quercus', 'mixed'
+data$Species <- gsub("PnC|Ps", "pinus", data$Species)
+data$Species <- gsub("Qr|Qa", "quercus", data$Species)
+data$Species <- gsub("Fs", "fagus", data$Species)
+data$Species <- gsub("quercus/fagus", "mixed", data$Species)
+data$Species <- gsub("fagus/quercus", "mixed", data$Species)
+
+#als factor om te werken in gam
+data$Species <- as.factor(data$Species)
+#height as numeric instead of character
+data$ETH_height <- as.numeric(data$ETH_height)
+
+```
+
+```{r add column with AGB of different DBH percentiles}
+setwd("C:/Users/u0152263/OneDrive - KU Leuven/Papers/CarbonManagementRS")
+#load excel with tree data and calculated tree carbon
+library(readxl)
+plot_AGB <- read_xlsx("data_DBH_analysis.xlsx", sheet=3)
+
+data<- data[order(data$id),]
+plot_AGB <- plot_AGB[order(plot_AGB$plot_ID),]
+
+data$AGB_40 <-  plot_AGB$AGB_per_ha_40
+data$AGB_50 <-  plot_AGB$AGB_per_ha_50
+data$AGB_60 <-  plot_AGB$AGB_per_ha_60
+data$AGB_70 <-  plot_AGB$AGB_per_ha_70
+data$AGB_51 <-  plot_AGB$AGB_per_ha_51
+data$AGB_52 <-  plot_AGB$AGB_per_ha_52
+data$AGB_53 <-  plot_AGB$AGB_per_ha_53
+data$AGB_54 <-  plot_AGB$AGB_per_ha_54
+data$AGB_55 <-  plot_AGB$AGB_per_ha_55
+data$AGB_56 <-  plot_AGB$AGB_per_ha_56
+data$AGB_57 <-  plot_AGB$AGB_per_ha_57
+data$AGB_58 <-  plot_AGB$AGB_per_ha_58
+data$AGB_59 <-  plot_AGB$AGB_per_ha_59
+
+data_sc <- data[,-1:-13]
+data_sc[] <- lapply(data_sc, function(x) {
+  if(is.character(x)) {
+    as.numeric(as.character(x))
+  } else {
+    x
+  }
+})
+vars_scale <- scale(data_sc[,1:26], center=T, scale=T)
+ETH_norm <- scale(data_sc$ETH_height)
+data_sc <- cbind.data.frame(vars_scale,ETH_norm,data$Species, data_sc$AGB, data_sc$AGB_40, data_sc$AGB_50, data_sc$AGB_60, data_sc$AGB_70, data_sc$AGB_51, data_sc$AGB_52, data_sc$AGB_53,data_sc$AGB_54,data_sc$AGB_55,data_sc$AGB_56,data_sc$AGB_57,data_sc$AGB_58,data_sc$AGB_59)
+names(data_sc)[names(data_sc) == "data_sc$AGB"] <- "AGB"
+names(data_sc)[names(data_sc) == "data$Species"] <- "Species"
+names(data_sc)[names(data_sc) == "data_sc$AGB_40"] <- "AGB_40"
+names(data_sc)[names(data_sc) == "data_sc$AGB_50"] <- "AGB_50"
+names(data_sc)[names(data_sc) == "data_sc$AGB_60"] <- "AGB_60"
+names(data_sc)[names(data_sc) == "data_sc$AGB_70"] <- "AGB_70"
+names(data_sc)[names(data_sc) == "data_sc$AGB_51"] <- "AGB_51"
+names(data_sc)[names(data_sc) == "data_sc$AGB_52"] <- "AGB_52"
+names(data_sc)[names(data_sc) == "data_sc$AGB_53"] <- "AGB_53"
+names(data_sc)[names(data_sc) == "data_sc$AGB_54"] <- "AGB_54"
+names(data_sc)[names(data_sc) == "data_sc$AGB_55"] <- "AGB_55"
+names(data_sc)[names(data_sc) == "data_sc$AGB_56"] <- "AGB_56"
+names(data_sc)[names(data_sc) == "data_sc$AGB_57"] <- "AGB_57"
+names(data_sc)[names(data_sc) == "data_sc$AGB_58"] <- "AGB_58"
+names(data_sc)[names(data_sc) == "data_sc$AGB_59"] <- "AGB_59"
+
+#no outliers
+data_cl <- data_sc[data_sc$B12<6,]
+write.xlsx(data_sc, file="C:/Users/u0152263/OneDrive - KU Leuven/Papers/CarbonManagementRS/BelSen7-9_H_Sp_DBH_sc.xlsx", colNames=T)
+
+#carbon calculation
+data$Carbon <- 0.5*data$AGB
+data$Carbon_40 <- 0.5*data$AGB_40
+data$Carbon_50 <- 0.5*data$AGB_50
+data$Carbon_60 <- 0.5*data$AGB_60
+data$Carbon_70 <- 0.5*data$AGB_70
+data$Carbon_51 <- 0.5*data$AGB_51
+data$Carbon_52 <- 0.5*data$AGB_52
+data$Carbon_53 <- 0.5*data$AGB_53
+data$Carbon_54 <- 0.5*data$AGB_54
+data$Carbon_55 <- 0.5*data$AGB_55
+data$Carbon_56 <- 0.5*data$AGB_56
+data$Carbon_57 <- 0.5*data$AGB_57
+data$Carbon_58 <- 0.5*data$AGB_58
+data$Carbon_59 <- 0.5*data$AGB_59
+
+
+# 1 outlier
+data <- data[data$B12<6,]
+
+write.xlsx(data, file="C:/Users/u0152263/OneDrive - KU Leuven/Papers/CarbonManagementRS/BelSen7-9_H_Sp_DBH_cl_VVVH_Carbon.xlsx", colNames=T, overwrite=T)
+```
+
+## 2) Modeling
+
+```{r data}
+setwd("C:/Users/u0152263/OneDrive - KU Leuven/Papers/CarbonManagementRS/R")
+library(openxlsx)
+data <- read.xlsx("BelSen7-9_H_Sp_DBH_cl_VVVH_Carbon.xlsx")
+data$Species <- as.factor(data$Species)
+data$Sen1_VV <- as.numeric(data$Sen1_VV)
+data$Sen1_VH <- as.numeric(data$Sen1_VH)
+```
+
+```{r model}
+#to make a robust model
+data_gams <- data
+#data_gams <- data[data$Carbon_70>0,]
+set.seed(1)
+train_ind <- sample(1:nrow(data_gams), 0.9 * nrow(data_gams))
+data_gams_train <- data_gams[train_ind, ]
+data_gams_test<- data_gams[-train_ind, ]
+r_sq_means <- numeric(length=nrow(data_gams_train))
+# Perform Leave-One-Out Cross-Validation (LOOCV)
+library(mgcv)
+for (i in 1:nrow(data_gams_train)) {
+  train <- data_gams_train[-i, ]  # only 1 test observation: i
+  test <- data_gams_train[i, ]
+  formula <- Carbon_50~s(MCARI)+B5+STVI3+s(B12)+GNDVI+ETH_norm+s(Species,bs='re')+s(Sen1_VH)+Sen1_VV
+  # Fit model on training data
+  gam_model <- gam(formula, data = train,family = Gamma(link="log"),method='NCV', gamma=1.4)
+  # Predict on the left-out observation
+  # prediction <- predict.gam(gam_model, newdata = test)
+  # Calculate deviance explained for this fold
+  sum <- summary(gam_model)
+  r_sq_means[i] <-  sum$dev.expl
+  
+}
+mean(r_sq_means)
+```
+
+```{r final model}
+
+#final model ----
+gam_fin <- gam(formula=Carbon_50~s(MCARI)+B5+STVI3+s(B12)+GNDVI+ETH_norm+s(Species,bs='re')+s(Sen1_VH)+Sen1_VV, data=data_gams_train,  family = Gamma(link="log"), method="NCV")
+# test on the non-seen testing data
+pred_fin <- predict(gam_fin, newdata = data_gams_test, type='response')
+#validation metrics
+library(Metrics)
+rmse_fin <- rmse(pred_fin, data_gams_test$Carbon_50)
+rmse_fin
+mae_fin<-  mae(pred_fin, data_gams_test$Carbon_50)
+mae_fin
+#plot(data_gams_test$Carbon, pred_fin)
+#sum <- summary(gam_fin)
+#dev_expl_fin <- sum$dev.expl
+#dev_expl_fin
+
+```
+
+Results
+Carbon:    R²=0.684 - RMSE = 56.35 - MAE = 50.068
+Carbon_40: R²=0.69 -  RMSE = 57.52 - MAE=49.981
+Carbon_50: R²=0.694 - RMSE = 58.17 - MAE=49. 61 --> tipping point
+Carbon_60: R²=0.583 - RMSE = 56.23 - MAE=45.35
+Carbon_70: R²=0.489 - RMSE = 32.09 - MAE=26.7
+
+
+Carbon_51: R²= 0.669 - RMSE = 59.28 - MAE= 50.44
+Carbon_52: R²= 0.666 - RMSE = 59.27 - MAE= 50.462
+Carbon_53: R²= 0.621 - RMSE = 60.57 - MAE= 50.92
+Carbon_54: R²= 0.586 - RMSE = 60.84 - MAE= 50.70
