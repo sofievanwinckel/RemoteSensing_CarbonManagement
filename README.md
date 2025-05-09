@@ -5,7 +5,7 @@ In this excel file, all field measurements are provided. In the tabblad 'tree_da
 The 'plot_data' tabblad contains the information per measured plot, with the AGB and AGB_per_ha aggregated from the individual tree measurements (in total and per nesting level). The location of each plot is shown with lat and long coordinates. AGB= above-ground biomass, BA=basal area, n= number of trees.
 Lastly, the 'patch_data' shows the same, but now aggregated per forest patch (taken the mean of all three plots per patch). 
 
-## data_DBH_analysis
+## data_DBH_analysis.xlsx
 The data that is used to run the CarbonManagement_code_DBHanalysis. Only the third tab is used, the others are provided for the sake of completenness. 
 
 ## CarbonManagement_code_modelAnalysis.R
